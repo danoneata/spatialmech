@@ -3,7 +3,7 @@ import torch
 import numpy as np
 import pandas as pd
 from datasets import load_from_disk
-from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
+from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
 from tqdm import tqdm
 import random
 import os
@@ -42,6 +42,24 @@ def run_inference(
     dataset = load_from_disk(dataset_path)
     print(f"Dataset loaded: {len(dataset)} samples")
 
+    # Preprocess: Remove '_of' from preposition labels
+    preposition_mapping = {
+        "right_of": "right",
+        "left_of": "left",
+        "in-front_of": "front",
+        "behind": "behind",
+    }
+
+    def map_preposition(example):
+        example["preposition"] = preposition_mapping.get(
+            example["preposition"], example["preposition"]
+        )
+        return example
+
+    print("Preprocessing dataset: mapping prepositions...")
+    dataset = dataset.map(map_preposition)
+    print(f"Prepositions mapped: {preposition_mapping}")
+
     # Check if this is a one-object dataset
     is_one_object = "one" in dataset_name.lower()
 
@@ -51,8 +69,8 @@ def run_inference(
 
     # Load model and processor
     print(f"Loading Qwen3-VL from {model_path}")
-    model = Qwen2VLForConditionalGeneration.from_pretrained(
-        model_path, torch_dtype=torch.bfloat16, device_map="auto"
+    model = Qwen3VLForConditionalGeneration.from_pretrained(
+        model_path, dtype=torch.bfloat16, device_map="auto"
     )
     processor = AutoProcessor.from_pretrained(model_path)
 
@@ -199,8 +217,8 @@ def main():
     datasets = {
         "controlled_a": "controlled_a.hf",
         "controlled_b": "controlled_b.hf",
-        "coco_one": "coco_one.hf",
-        "coco_two": "coco_two.hf",
+        "coco_one": "coco_qa_one_obj.hf",
+        "coco_two": "coco_qa_two_obj.hf",
     }
     dataset_name = datasets[args.dataset]
     # Run inference on each dataset
