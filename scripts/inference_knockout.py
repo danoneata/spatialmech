@@ -97,8 +97,6 @@ class AttentionKnockoutHook:
             vision_range: (start, end) tuple for vision token indices
             knockout_mode: Type of knockout to apply
                 - "block_image": Block last token from attending to image
-                - "block_text": Block last token from attending to text
-                - "only_image": Force last token to only attend to image
         """
         self.vision_range = vision_range
         self.knockout_mode = knockout_mode
@@ -108,31 +106,27 @@ class AttentionKnockoutHook:
         """Create a forward hook for a specific layer."""
 
         def hook_fn(module, args, kwargs, output):
-            # output is typically (hidden_states, attention_weights, ...)
-            # We need to modify attention_weights
+            # output is typically (hidden_states, attention_weights, past_key_value)
+            # We need to modify attention_weights if they exist
 
             # Get attention weights from output
-            if isinstance(output, tuple):
+            if isinstance(output, tuple) and len(output) > 1:
                 hidden_states = output[0]
-                attn_weights = output[1] if len(output) > 1 else None
-            else:
-                hidden_states = output
-                attn_weights = None
+                attn_weights = output[1]
 
-            # If we have attention weights, modify them
-            if attn_weights is not None and self.knockout_mode == "block_image":
-                # attn_weights shape: (batch, num_heads, seq_len, seq_len)
-                batch_size, num_heads, seq_len, key_len = attn_weights.shape
+                if attn_weights is not None and self.knockout_mode == "block_image":
+                    # attn_weights shape: (batch, num_heads, seq_len, seq_len)
+                    batch_size, num_heads, seq_len, key_len = attn_weights.shape
 
-                # Only modify the last token's attention (last row)
-                # Block attention to vision tokens
-                vision_start, vision_end = self.vision_range
+                    # Only modify the last token's attention (last row)
+                    # Block attention to vision tokens
+                    vision_start, vision_end = self.vision_range
 
-                # Set attention to vision tokens to very small value (effectively zero)
-                attn_weights[:, :, -1, vision_start:vision_end] = -1e10
+                    # Set attention to vision tokens to very small value (effectively zero)
+                    attn_weights[:, :, -1, vision_start:vision_end] = -1e10
 
-                # Renormalize
-                attn_weights[:, :, -1, :] = torch.softmax(attn_weights[:, :, -1, :], dim=-1)
+                    # Renormalize
+                    attn_weights[:, :, -1, :] = torch.softmax(attn_weights[:, :, -1, :], dim=-1)
 
             return output
 
@@ -140,10 +134,17 @@ class AttentionKnockoutHook:
 
     def register_hooks(self, model):
         """Register hooks on all attention layers."""
+        if len(self.hooks) > 0:
+            # Already registered
+            return
+
         print(f"Registering knockout hooks with mode: {self.knockout_mode}")
 
-        # For Qwen3VL, attention layers are in model.model.layers
-        for layer_idx, layer in enumerate(model.model.layers):
+        # For Qwen3VL, layers are in model.model.language_model.layers
+        layers = model.model.language_model.layers
+
+        # Register hooks on attention layers
+        for layer_idx, layer in enumerate(layers):
             # Hook into the self-attention module
             if hasattr(layer, 'self_attn'):
                 hook = layer.self_attn.register_forward_hook(
@@ -281,7 +282,8 @@ def run_knockout_inference(
                 generated_ids = model.generate(
                     **inputs,
                     max_new_tokens=10,
-                    do_sample=False,  # Greedy decoding for deterministic results
+                    do_sample=False,
+                    output_attentions=True,  # Required for hooks to work
                 )
 
             # Remove hooks after generation
@@ -298,6 +300,8 @@ def run_knockout_inference(
 
         except Exception as e:
             print(f"Error processing sample {idx}: {e}")
+            import traceback
+            traceback.print_exc()
             generated_text = "ERROR"
             if knockout_hook is not None:
                 knockout_hook.remove_hooks()
