@@ -13,6 +13,26 @@ st.set_page_config(layout="wide")
 PATH_ATTENTIONS_H5 = "output/attentions-Controlled_Images_B.h5"
 h5py_file = h5py.File(PATH_ATTENTIONS_H5, "r")
 
+
+def show_attention_to_image(attentions, caption):
+    H, W = image.shape[:2]
+    PATCH_SIZE = 32
+    W = W // PATCH_SIZE
+    H = H // PATCH_SIZE
+    IMAGE_TOKEN = "<|image_pad|>"
+    image_idxs = [i for i, t in enumerate(tokens) if t == IMAGE_TOKEN]
+    attentions = attentions[image_idxs]
+    attentions = attentions.reshape(H, W)
+    max_val = attentions.max()
+    attentions = attentions / max_val
+    caption = caption + " · max: {:.2f}".format(max_val)
+    st.image(
+        attentions,
+        caption=caption,
+        use_container_width=True,
+    )
+
+
 with st.sidebar:
     idx = st.number_input("Sample index", min_value=0, max_value=9, value=0)
 
@@ -39,31 +59,17 @@ with st.sidebar:
         )
     )
 
-tokens = [t.decode("utf-8") for t in results["input-tokens"][()]]
+    st.markdown("---")
+
+    tokens = [t.decode("utf-8") for t in results["input-tokens"][()]]
+
+    attentions = results["attention-rollout"][()]
+    attentions = attentions[-1]
+    show_attention_to_image(attentions, "Attention Rollout")
+
+
 attentions = results["attentions"][()]
 num_layers, num_heads, seq_len = attentions.shape
-
-
-def show_attention_to_image(attentions, layer_idx, head_idx):
-    W, H = image.size
-    PATCH_SIZE = 32
-    W = W // PATCH_SIZE
-    H = H // PATCH_SIZE
-    IMAGE_TOKEN = "<|image_pad|>"
-    image_idxs = [i for i, t in enumerate(tokens) if t == IMAGE_TOKEN]
-    attentions = attentions[layer_idx, head_idx]
-    attentions = attentions[image_idxs]
-    attentions = attentions.reshape(H, W)
-    max_val = attentions.max()
-    attentions = attentions / max_val
-    st.image(
-        attentions,
-        caption="L: {} · H: {} · max: {:.2f}".format(layer_idx, head_idx, max_val),
-        # caption="{} {}".format(min(attentions.flatten()), max(attentions.flatten())),
-        # use_column_width=True,
-        use_container_width=True,
-    )
-
 
 st.markdown("### Attention to image tokens -- per layer and per head")
 col0, col1, col2, *_ = st.columns([1, 1, 1, 3])
@@ -93,7 +99,8 @@ for head_idx in range(num_heads):
     cols = st.columns(len(layer_idxs))
     for col, layer_idx in zip(cols, layer_idxs):
         with col:
-            show_attention_to_image(attentions, layer_idx, head_idx)
+            caption = "L: {} · H: {}".format(layer_idx, head_idx)
+            show_attention_to_image(attentions[layer_idx, head_idx], caption)
 
 
 st.markdown("### Attention to other tokens")

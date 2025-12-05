@@ -180,9 +180,13 @@ def extract_attentions():
         generated_text = generated_text[0].strip()
 
         attentions_orig = get_attention_matrix(outputs)
-        attentions = attentions_orig[:, :, -1]
+
+        query_idx = -1
+        attentions = attentions_orig[:, :, query_idx, :]
         attentions = attentions.cpu().float().numpy()
+
         attention_rollout = get_attention_rollout(attentions_orig)
+        attention_rollout = attention_rollout[query_idx, :]
         attention_rollout = attention_rollout.cpu().float().numpy()
 
         datum = get_datum(i)
